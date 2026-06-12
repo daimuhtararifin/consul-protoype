@@ -1,0 +1,33 @@
+services:
+  # Matikan consul dan seed di mode dev
+  consul:
+    profiles: ["prod-only"]
+  consul-seed:
+    profiles: ["prod-only"]
+  nginx:
+    profiles: ["prod-only"]
+
+  # App langsung tembak command tanpa consul-template, pakai file .env
+  js-app:
+    env_file: ./apps/js-app/.env
+    command: node /app/main.js
+    volumes: !reset []
+    depends_on: !reset []
+
+  go-app:
+    env_file: ./apps/go-app/.env
+    command: /app/server
+    volumes: !reset []
+    depends_on: !reset []
+
+  java-app:
+    env_file: ./apps/java-app/.env
+    command: java -cp /app Main
+    volumes: !reset []
+    depends_on: !reset []
+
+  cpp-app:
+    env_file: ./apps/cpp-app/.env
+    command: /app/server
+    volumes: !reset []
+    depends_on: !reset []

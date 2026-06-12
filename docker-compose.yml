@@ -1,0 +1,114 @@
+services:
+  consul:
+    image: hashicorp/consul:1.18
+    container_name: consul-server
+    ports:
+      - "8500:8500" #Consol UI
+    healthcheck:
+      test: [ "CMD", "consul", "info" ]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  consul-seed:
+    image: hashicorp/consul:1.18
+    container_name: consul-seed
+    depends_on:
+      consul:
+        condition: service_healthy
+    volumes:
+      - ./consul/seed.sh:/seed.sh
+    entrypoint: /bin/sh
+    command: /seed.sh
+    environment:
+      - CONSUL_HTTP_ADDR=consul:8500
+  
+  js-app:
+    build: ./apps/js-app
+    container_name: js-app
+    depends_on:
+      consul-seed:
+        condition: service_completed_successfully
+    environment:
+      - SERVICE_NAME=js-app
+    volumes:
+      - ./shared/config.env.ctmpl:/app/config.env.ctmpl:ro
+      - ./shared/start.sh:/app/start.sh:ro
+    command: >
+      consul-template -consul-addr=consul:8500
+      -template="/app/config.env.ctmpl:/app/config.env"
+      -exec="/app/start.sh node /app/main.js"
+    ports:
+      - "8004:8004"
+    
+  go-app:
+    build: ./apps/go-app
+    container_name: go-app
+    depends_on:
+      consul-seed:
+        condition: service_completed_successfully
+    environment:
+      - SERVICE_NAME=go-app
+    volumes:
+      - ./shared/config.env.ctmpl:/app/config.env.ctmpl:ro
+      - ./shared/start.sh:/app/start.sh:ro
+    command: >
+      consul-template -consul-addr=consul:8500
+      -template="/app/config.env.ctmpl:/app/config.env"
+      -exec="/app/start.sh /app/server"
+    ports:
+      - "8001:8001"
+
+  java-app:
+    build: ./apps/java-app
+    container_name: java-app
+    depends_on:
+      consul-seed:
+        condition: service_completed_successfully
+    environment:
+      - SERVICE_NAME=java-app
+    volumes:
+      - ./shared/config.env.ctmpl:/app/config.env.ctmpl:ro
+      - ./shared/start.sh:/app/start.sh:ro
+    command: >
+      consul-template -consul-addr=consul:8500
+      -template="/app/config.env.ctmpl:/app/config.env"
+      -exec="/app/start.sh java -cp /app Main"
+    ports:
+      - "8003:8003"
+
+  cpp-app:
+    build: ./apps/cpp-app
+    container_name: cpp-app
+    depends_on:
+      consul-seed:
+        condition: service_completed_successfully
+    environment:
+      - SERVICE_NAME=cpp-app
+    volumes:
+      - ./shared/config.env.ctmpl:/app/config.env.ctmpl:ro
+      - ./shared/start.sh:/app/start.sh:ro
+    command: >
+      consul-template -consul-addr=consul:8500
+      -template="/app/config.env.ctmpl:/app/config.env"
+      -exec="/app/start.sh /app/server"
+    ports:
+      - "8002:8002"
+
+  nginx:
+    build: ./nginx
+    container_name: nginx-proxy
+    depends_on:
+      consul-seed:
+        condition: service_completed_successfully
+      js-app:
+        condition: service_started
+      go-app:
+        condition: service_started
+      java-app:
+        condition: service_started
+      cpp-app:
+        condition: service_started
+    ports:
+      - "8088:8080"
+

@@ -1,0 +1,19 @@
+events {
+    worker_connections 1024;
+}
+
+http {
+    server {
+        listen 8080;
+        server_name {{ keyOrDefault "config/nginx/domain" "localhost" }};
+
+        # Generate routing rules secara dinamis dari Consul KV
+        {{ range ls "config/nginx/routes/" }}
+        location /{{ .Key }}/ {
+            proxy_pass http://{{ .Value }}/;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+        }
+        {{ end }}
+    }
+}
