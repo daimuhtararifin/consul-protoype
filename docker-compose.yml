@@ -31,6 +31,7 @@ services:
         condition: service_completed_successfully
     environment:
       - SERVICE_NAME=js-app
+      - APP_ENV=prod
     volumes:
       - ./shared/config.env.ctmpl:/app/config.env.ctmpl:ro
       - ./shared/start.sh:/app/start.sh:ro
@@ -49,6 +50,7 @@ services:
         condition: service_completed_successfully
     environment:
       - SERVICE_NAME=go-app
+      - APP_ENV=prod
     volumes:
       - ./shared/config.env.ctmpl:/app/config.env.ctmpl:ro
       - ./shared/start.sh:/app/start.sh:ro
@@ -67,6 +69,7 @@ services:
         condition: service_completed_successfully
     environment:
       - SERVICE_NAME=java-app
+      - APP_ENV=prod
     volumes:
       - ./shared/config.env.ctmpl:/app/config.env.ctmpl:ro
       - ./shared/start.sh:/app/start.sh:ro
@@ -85,6 +88,7 @@ services:
         condition: service_completed_successfully
     environment:
       - SERVICE_NAME=cpp-app
+      - APP_ENV=prod
     volumes:
       - ./shared/config.env.ctmpl:/app/config.env.ctmpl:ro
       - ./shared/start.sh:/app/start.sh:ro
@@ -98,6 +102,8 @@ services:
   nginx:
     build: ./nginx
     container_name: nginx-proxy
+    environment:
+      - APP_ENV=prod
     depends_on:
       consul-seed:
         condition: service_completed_successfully

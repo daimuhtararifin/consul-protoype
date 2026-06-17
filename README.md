@@ -1,6 +1,11 @@
 # Consul Template Architecture Prototype
 
-> Prototype arsitektur injeksi konfigurasi dinamis menggunakan **Consul KV Store** dan **consul-template** sebagai *Single Source of Truth* untuk aplikasi multi-bahasa dan Nginx reverse proxy.
+> Prototype arsitektur injeksi konfigurasi dinamis menggunakan **Consul KV Store** dan **consul-template** sebagai *single source of truth* untuk aplikasi multi-bahasa dan Nginx reverse proxy.
+>
+> Prototype ini memisahkan konfigurasi berdasarkan environment:
+>
+> - **DEV**: aplikasi membaca file `.env` lokal melalui `docker-compose.dev.yml`.
+> - **PROD**: aplikasi dan Nginx membaca Consul KV dengan namespace `config/prod/*` melalui `consul-template`.
 
 ---
 
@@ -29,14 +34,27 @@
 
 ---
 
+## Design Goals
+
+| Goal | Implementasi |
+|------|--------------|
+| App tetap polyglot | Go, C++, Java, dan JS membaca environment variable yang sama |
+| Dev tetap ringan | Tidak perlu menjalankan Consul atau Nginx; cukup file `.env` lokal |
+| Prod terpusat | Config runtime disimpan di Consul KV pada namespace `config/prod/*` |
+| Kode app tidak berubah antar environment | Switching config source terjadi di Docker Compose dan `consul-template` |
+| Template reusable | Satu `shared/config.env.ctmpl` dipakai semua app dengan `APP_ENV` + `SERVICE_NAME` |
+| Reverse proxy dinamis | `nginx.conf` dirender dari Consul KV sehingga route bisa berubah tanpa rebuild image |
+
+---
+
 ## Arsitektur — Mode PROD
 
-Semua service aktif. Config bersumber dari Consul KV Store, di-inject ke aplikasi via `consul-template`.
+Semua service aktif. Config bersumber dari Consul KV Store di namespace `config/prod/*`, lalu di-inject ke aplikasi via `consul-template`.
 
 ```
    ┌────────────────────────────────────────────────────────────────────┐
    │  consul-seed (berjalan sekali, lalu selesai)                      │
-   │  └── Isi Consul KV: config/go-app/*, config/nginx/routes/*, dst.  │
+   │  └── Isi Consul KV: config/prod/<service>/* dan config/prod/nginx │
    └───────────────────────────────┬────────────────────────────────────┘
                                    │
                                    ▼
@@ -52,6 +70,7 @@ Semua service aktif. Config bersumber dari Consul KV Store, di-inject ke aplikas
    ┌─────────────┐                            ┌───────────────────┐
    │ config.env  │                            │    nginx.conf     │
    └──────┬──────┘                            └────────┬──────────┘
+          │ APP_ENV=prod                              │ APP_ENV=prod
           │ source (start.sh)                          │
           ▼                                            ▼
    ┌────────────────────────────────┐        ┌──────────────────────┐
@@ -65,12 +84,13 @@ Semua service aktif. Config bersumber dari Consul KV Store, di-inject ke aplikas
 ```
 
 **Alur:**
-1. `consul-seed` mengisi Consul KV Store dengan data konfigurasi awal, lalu container-nya mati.
-2. `consul-template` di dalam setiap container membaca KV Store dan merender file `config.env`.
-3. `start.sh` melakukan *source* terhadap `config.env` sehingga nilainya jadi environment variable.
-4. Aplikasi membaca environment variable dan berjalan sesuai konfigurasi.
-5. Nginx mendapatkan `nginx.conf` yang di-generate dinamis dari `config/nginx/routes/*` di Consul.
-6. Jika ada perubahan nilai di Consul KV, `consul-template` otomatis merender ulang dan me-restart aplikasi/reload Nginx.
+1. `consul-seed` mengisi Consul KV Store dengan data konfigurasi awal di prefix `config/prod/*`, lalu container-nya selesai.
+2. `docker-compose.yml` mengirim `APP_ENV=prod` dan `SERVICE_NAME=<service>` ke setiap app container.
+3. `consul-template` di dalam setiap container membaca KV Store dan merender file `config.env`.
+4. `start.sh` melakukan *source* terhadap `config.env` sehingga nilainya menjadi environment variable.
+5. Aplikasi membaca environment variable dan berjalan sesuai konfigurasi.
+6. Nginx mendapatkan `nginx.conf` yang di-generate dinamis dari `config/prod/nginx/routes/*` di Consul.
+7. Jika ada perubahan nilai di Consul KV, `consul-template` otomatis merender ulang dan me-restart aplikasi/reload Nginx.
 
 ---
 
@@ -98,7 +118,8 @@ Consul, Nginx, dan consul-seed tidak dijalankan. Aplikasi membaca config langsun
 1. Docker Compose membaca `docker-compose.dev.yml` sebagai override.
 2. Service consul, consul-seed, dan nginx dinonaktifkan via `profiles`.
 3. Setiap aplikasi langsung menggunakan `env_file` untuk membaca file `.env` lokal sebagai konfigurasi.
-4. `volumes` dan `depends_on` yang merujuk ke Consul di-reset (`!reset []`) agar tidak error.
+4. `APP_ENV=dev` diset eksplisit di override agar hasil render Compose tidak membawa `APP_ENV=prod`.
+5. `volumes` dan `depends_on` yang merujuk ke Consul di-reset (`!reset []`) agar tidak error.
 
 ---
 
@@ -145,40 +166,51 @@ consul_prototype/
 │   └── start.sh                    # Script: render config → start nginx → watch
 │
 └── docs/
-    └── consul_prototype_complete.md
+    ├── consul_prototype_complete.md
+    └── multi_environment_consul_template_plan.md
 ```
 
 ---
 
 ## Consul KV Schema
 
-Semua konfigurasi disimpan di Consul KV Store dengan format path berikut:
+Untuk mode PROD, semua konfigurasi runtime disimpan di Consul KV Store dengan prefix `config/prod/*`.
 
 ```
 config/
-├── go-app/
-│   ├── APP_NAME    = "go-app"
-│   ├── APP_PORT    = "8001"
-│   └── LOG_LEVEL   = "debug"
-├── cpp-app/
-│   ├── APP_NAME    = "cpp-app"
-│   ├── APP_PORT    = "8002"
-│   └── LOG_LEVEL   = "info"
-├── java-app/
-│   ├── APP_NAME    = "java-app"
-│   ├── APP_PORT    = "8003"
-│   └── LOG_LEVEL   = "warn"
-├── js-app/
-│   ├── APP_NAME    = "js-app"
-│   ├── APP_PORT    = "8004"
-│   └── LOG_LEVEL   = "debug"
-└── nginx/
-    ├── domain      = "prototype.local"
-    └── routes/
-        ├── go-app   = "go-app:8001"
-        ├── cpp-app  = "cpp-app:8002"
-        ├── java-app = "java-app:8003"
-        └── js-app   = "js-app:8004"
+└── prod/
+    ├── go-app/
+    │   ├── APP_NAME    = "go-app"
+    │   ├── APP_PORT    = "8001"
+    │   └── LOG_LEVEL   = "debug"
+    ├── cpp-app/
+    │   ├── APP_NAME    = "cpp-app"
+    │   ├── APP_PORT    = "8002"
+    │   └── LOG_LEVEL   = "info"
+    ├── java-app/
+    │   ├── APP_NAME    = "java-app"
+    │   ├── APP_PORT    = "8003"
+    │   └── LOG_LEVEL   = "warn"
+    ├── js-app/
+    │   ├── APP_NAME    = "js-app"
+    │   ├── APP_PORT    = "8004"
+    │   └── LOG_LEVEL   = "debug"
+    └── nginx/
+        ├── domain      = "prototype.local"
+        └── routes/
+            ├── go-app   = "go-app:8001"
+            ├── cpp-app  = "cpp-app:8002"
+            ├── java-app = "java-app:8003"
+            └── js-app   = "js-app:8004"
+```
+
+Mode DEV tidak membaca Consul KV. Nilai dev tetap berada di file `.env` masing-masing app:
+
+```
+apps/go-app/.env
+apps/cpp-app/.env
+apps/java-app/.env
+apps/js-app/.env
 ```
 
 ---
@@ -201,11 +233,17 @@ config/
 ### Mode PROD (dengan Consul)
 
 ```bash
+# Validasi hasil render compose
+docker compose config
+
 # Build dan jalankan semua services
 docker compose up -d --build
 
 # Verifikasi semua container berjalan
 docker compose ps
+
+# Verifikasi key prod sudah ter-seed
+docker exec consul-server consul kv get -recurse config/prod/
 ```
 
 **Endpoint yang tersedia:**
@@ -225,9 +263,19 @@ docker compose ps
 ### Mode DEV (tanpa Consul)
 
 ```bash
+# Validasi hasil merge compose dev
+docker compose -f docker-compose.yml -f docker-compose.dev.yml config
+
 # Jalankan aplikasi dengan file .env lokal, tanpa Consul dan Nginx
 docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
 ```
+
+Expected render mode DEV:
+
+- Tidak ada service `consul`, `consul-seed`, dan `nginx`.
+- Setiap app memiliki `APP_ENV=dev`.
+- Setiap app membaca `APP_NAME`, `APP_PORT`, dan `LOG_LEVEL` dari `apps/*/.env`.
+- Command app langsung menjalankan binary/runtime, bukan `consul-template`.
 
 ### Menghentikan Semua Services
 
@@ -241,15 +289,27 @@ docker compose down
 
 ### Shared Template (DRY)
 
-Semua 4 aplikasi menggunakan **satu file template** yang sama (`shared/config.env.ctmpl`). Diferensiasi dilakukan melalui environment variable `SERVICE_NAME` yang di-set di `docker-compose.yml` per service.
+Semua 4 aplikasi menggunakan **satu file template** yang sama (`shared/config.env.ctmpl`). Diferensiasi dilakukan melalui:
+
+- `APP_ENV`: environment runtime, misalnya `prod`.
+- `SERVICE_NAME`: nama service, misalnya `go-app`.
 
 ```
-APP_NAME={{ keyOrDefault (printf "config/%s/APP_NAME" (env "SERVICE_NAME")) "unknown" }}
-APP_PORT={{ keyOrDefault (printf "config/%s/APP_PORT" (env "SERVICE_NAME")) "8000" }}
-LOG_LEVEL={{ keyOrDefault (printf "config/%s/LOG_LEVEL" (env "SERVICE_NAME")) "info" }}
+APP_NAME={{ keyOrDefault (printf "config/%s/%s/APP_NAME" (env "APP_ENV") (env "SERVICE_NAME")) "unknown" }}
+APP_PORT={{ keyOrDefault (printf "config/%s/%s/APP_PORT" (env "APP_ENV") (env "SERVICE_NAME")) "8000" }}
+LOG_LEVEL={{ keyOrDefault (printf "config/%s/%s/LOG_LEVEL" (env "APP_ENV") (env "SERVICE_NAME")) "info" }}
 ```
 
-Contoh: ketika `SERVICE_NAME=go-app`, template di atas merender menjadi:
+Contoh: ketika `APP_ENV=prod` dan `SERVICE_NAME=go-app`, template membaca:
+
+```
+config/prod/go-app/APP_NAME
+config/prod/go-app/APP_PORT
+config/prod/go-app/LOG_LEVEL
+```
+
+Output render:
+
 ```env
 APP_NAME=go-app
 APP_PORT=8001
@@ -261,7 +321,7 @@ LOG_LEVEL=debug
 ```
 consul-template start
     │
-    ├── Watch Consul KV (key: config/<SERVICE_NAME>/*)
+    ├── Watch Consul KV (key: config/<APP_ENV>/<SERVICE_NAME>/*)
     │
     ├── Render config.env.ctmpl → config.env
     │
@@ -289,7 +349,7 @@ Berikut adalah alur yang terjadi di balik layar ketika konfigurasi diubah (misal
               │
               ▼
 2. Consul Server menyimpan nilai baru
-   (config/go-app/LOG_LEVEL = "fatal")
+   (config/prod/go-app/LOG_LEVEL = "fatal")
               │
               ▼
 3. consul-template (di dalam container go-app)
@@ -324,7 +384,7 @@ watch -n1 curl -s http://localhost:8088/go-app/
 **Terminal 2 (Ubah Config):**
 ```bash
 # Ubah config via Consul HTTP API
-curl -X PUT http://localhost:8500/v1/kv/config/go-app/LOG_LEVEL -d "fatal"
+curl -X PUT http://localhost:8500/v1/kv/config/prod/go-app/LOG_LEVEL -d "fatal"
 ```
 *Perhatikan Terminal 1, respons JSON akan berubah dari "debug" ke "fatal" secara otomatis.*
 
@@ -339,6 +399,9 @@ Perubahan juga bisa dilakukan dengan mudah melalui UI di `http://localhost:8500`
 - **Multi-stage build** digunakan untuk Go, Java, dan C++ agar image final tetap kecil (hanya berisi binary + consul-template).
 - **`keyOrDefault`** digunakan di template sebagai fallback jika key belum tersedia di Consul saat pertama kali dirender.
 - **`!reset`** syntax di `docker-compose.dev.yml` digunakan untuk menghapus `depends_on` dan `volumes` dari file compose utama saat mode DEV.
+- **`APP_ENV=prod`** wajib ada di mode PROD karena template membaca Consul KV dari `config/<APP_ENV>/*`.
+- **`APP_ENV=dev`** diset di mode DEV untuk membuat output `docker compose config` eksplisit, meskipun app dev tidak memakai `consul-template`.
+- **Prototype ini belum production-hardened**: Consul masih single-node dev mode, belum memakai ACL, TLS, persistent volume, atau cluster HA.
 
 ---
 
