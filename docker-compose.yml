@@ -3,9 +3,9 @@ services:
     image: hashicorp/consul:1.18
     container_name: consul-server
     ports:
-      - "8500:8500" #Consol UI
+      - "8500:8500"
     healthcheck:
-      test: [ "CMD", "consul", "info" ]
+      test: ["CMD", "consul", "info"]
       interval: 5s
       timeout: 3s
       retries: 5
@@ -22,42 +22,61 @@ services:
     command: /seed.sh
     environment:
       - CONSUL_HTTP_ADDR=consul:8500
-  
+
+  config-renderer:
+    build:
+      context: ./consul-template
+      dockerfile: Dockerfile
+    container_name: config-renderer
+    depends_on:
+      consul-seed:
+        condition: service_completed_successfully
+    environment:
+      - APP_ENV=prod
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - go-config:/rendered/go-app
+      - cpp-config:/rendered/cpp-app
+      - java-config:/rendered/java-app
+      - js-config:/rendered/js-app
+      - nginx-config:/rendered/nginx
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /rendered/go-app/config.env && test -f /rendered/cpp-app/config.env && test -f /rendered/java-app/config.env && test -f /rendered/js-app/config.env && test -f /rendered/nginx/nginx.conf"]
+      interval: 3s
+      timeout: 2s
+      retries: 20
+
   js-app:
     build: ./apps/js-app
     container_name: js-app
     depends_on:
-      consul-seed:
-        condition: service_completed_successfully
+      config-renderer:
+        condition: service_healthy
     environment:
       - SERVICE_NAME=js-app
       - APP_ENV=prod
     volumes:
-      - ./shared/config.env.ctmpl:/app/config.env.ctmpl:ro
-      - ./shared/start.sh:/app/start.sh:ro
-    command: >
-      consul-template -consul-addr=consul:8500
-      -template="/app/config.env.ctmpl:/app/config.env"
-      -exec="/app/start.sh node /app/main.js"
+      - ./runtime/start-app.sh:/app/start.sh:ro
+      - js-config:/config:ro
+    entrypoint: ["/app/start.sh"]
+    command: ["node", "/app/main.js"]
     ports:
       - "8004:8004"
-    
+
   go-app:
     build: ./apps/go-app
     container_name: go-app
     depends_on:
-      consul-seed:
-        condition: service_completed_successfully
+      config-renderer:
+        condition: service_healthy
     environment:
       - SERVICE_NAME=go-app
       - APP_ENV=prod
     volumes:
-      - ./shared/config.env.ctmpl:/app/config.env.ctmpl:ro
-      - ./shared/start.sh:/app/start.sh:ro
-    command: >
-      consul-template -consul-addr=consul:8500
-      -template="/app/config.env.ctmpl:/app/config.env"
-      -exec="/app/start.sh /app/server"
+      - ./runtime/start-app.sh:/app/start.sh:ro
+      - go-config:/config:ro
+    entrypoint: ["/app/start.sh"]
+    command: ["/app/server"]
     ports:
       - "8001:8001"
 
@@ -65,18 +84,16 @@ services:
     build: ./apps/java-app
     container_name: java-app
     depends_on:
-      consul-seed:
-        condition: service_completed_successfully
+      config-renderer:
+        condition: service_healthy
     environment:
       - SERVICE_NAME=java-app
       - APP_ENV=prod
     volumes:
-      - ./shared/config.env.ctmpl:/app/config.env.ctmpl:ro
-      - ./shared/start.sh:/app/start.sh:ro
-    command: >
-      consul-template -consul-addr=consul:8500
-      -template="/app/config.env.ctmpl:/app/config.env"
-      -exec="/app/start.sh java -cp /app Main"
+      - ./runtime/start-app.sh:/app/start.sh:ro
+      - java-config:/config:ro
+    entrypoint: ["/app/start.sh"]
+    command: ["java", "-cp", "/app", "Main"]
     ports:
       - "8003:8003"
 
@@ -84,29 +101,26 @@ services:
     build: ./apps/cpp-app
     container_name: cpp-app
     depends_on:
-      consul-seed:
-        condition: service_completed_successfully
+      config-renderer:
+        condition: service_healthy
     environment:
       - SERVICE_NAME=cpp-app
       - APP_ENV=prod
     volumes:
-      - ./shared/config.env.ctmpl:/app/config.env.ctmpl:ro
-      - ./shared/start.sh:/app/start.sh:ro
-    command: >
-      consul-template -consul-addr=consul:8500
-      -template="/app/config.env.ctmpl:/app/config.env"
-      -exec="/app/start.sh /app/server"
+      - ./runtime/start-app.sh:/app/start.sh:ro
+      - cpp-config:/config:ro
+    entrypoint: ["/app/start.sh"]
+    command: ["/app/server"]
     ports:
       - "8002:8002"
 
   nginx:
     build: ./nginx
     container_name: nginx-proxy
-    environment:
-      - APP_ENV=prod
+    restart: unless-stopped
     depends_on:
-      consul-seed:
-        condition: service_completed_successfully
+      config-renderer:
+        condition: service_healthy
       js-app:
         condition: service_started
       go-app:
@@ -115,6 +129,14 @@ services:
         condition: service_started
       cpp-app:
         condition: service_started
+    volumes:
+      - nginx-config:/generated:ro
     ports:
       - "8088:8080"
 
+volumes:
+  go-config:
+  cpp-config:
+  java-config:
+  js-config:
+  nginx-config:

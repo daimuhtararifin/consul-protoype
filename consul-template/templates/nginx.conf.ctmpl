@@ -1,3 +1,4 @@
+{{ $env := env "APP_ENV" }}
 events {
     worker_connections 1024;
 }
@@ -5,10 +6,9 @@ events {
 http {
     server {
         listen 8080;
-        server_name {{ keyOrDefault (printf "config/%s/nginx/domain" (env "APP_ENV")) "localhost" }};
+        server_name {{ keyOrDefault (printf "config/%s/nginx/domain" $env) "localhost" }};
 
-        # Generate routing rules secara dinamis dari Consul KV
-        {{ range ls (printf "config/%s/nginx/routes/" (env "APP_ENV")) }}
+        {{ range ls (printf "config/%s/nginx/routes/" $env) }}
         location /{{ .Key }}/ {
             proxy_pass http://{{ .Value }}/;
             proxy_set_header Host $host;

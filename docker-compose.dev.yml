@@ -6,16 +6,19 @@ services:
   consul-seed:
     profiles: ["prod-only"]
 
+  config-renderer:
+    profiles: ["prod-only"]
+
   nginx:
     profiles: ["prod-only"]
 
-  # App langsung tembak command tanpa consul-template, pakai file .env
+  # App menjalankan CMD bawaan dari Dockerfile dan membaca konfigurasi dari file .env lokal
   js-app:
     env_file: ./apps/js-app/.env
     environment:
       - SERVICE_NAME=js-app
       - APP_ENV=dev
-    command: node /app/main.js
+    entrypoint: !reset null
     volumes: !reset []
     depends_on: !reset []
 
@@ -24,7 +27,7 @@ services:
     environment:
       - SERVICE_NAME=go-app
       - APP_ENV=dev
-    command: /app/server
+    entrypoint: !reset null
     volumes: !reset []
     depends_on: !reset []
 
@@ -33,7 +36,7 @@ services:
     environment:
       - SERVICE_NAME=java-app
       - APP_ENV=dev
-    command: java -cp /app Main
+    entrypoint: !reset null
     volumes: !reset []
     depends_on: !reset []
 
@@ -42,6 +45,6 @@ services:
     environment:
       - SERVICE_NAME=cpp-app
       - APP_ENV=dev
-    command: /app/server
+    entrypoint: !reset null
     volumes: !reset []
     depends_on: !reset []

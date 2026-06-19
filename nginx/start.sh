@@ -1,15 +1,12 @@
 #!/bin/sh
+set -eu
 
-echo "Step 1: Render nginx.conf pertama kali dari Consul..."
-consul-template \
-  -consul-addr=consul:8500 \
-  -template="/etc/nginx/nginx.conf.ctmpl:/etc/nginx/nginx.conf" \
-  -once
+CONFIG_FILE="${NGINX_CONFIG_FILE:-/generated/nginx.conf}"
 
-echo "Step 2: Nginx config siap, mulai Nginx..."
-nginx
+echo "Waiting for nginx config: ${CONFIG_FILE}"
+while [ ! -f "$CONFIG_FILE" ]; do
+  sleep 1
+done
 
-echo "Step 3: Watch perubahan Consul, reload Nginx kalau ada update..."
-exec consul-template \
-  -consul-addr=consul:8500 \
-  -template="/etc/nginx/nginx.conf.ctmpl:/etc/nginx/nginx.conf:nginx -s reload"
+echo "Starting nginx with rendered config..."
+exec nginx -c "$CONFIG_FILE" -g "daemon off;"
